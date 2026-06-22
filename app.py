@@ -3,7 +3,8 @@ import pandas as pd
 import plotly.express as px
 import google.generativeai as genai
 import io
-import streamlit.components.v1 as components  # Required for browser voice playback
+import streamlit.components.v1 as components
+from google.api_core import exceptions  # Added to catch the rate limit securely
 
 # Secure connection to the Gemini API Key vault
 if "GEMINI_API_KEY" in st.secrets:
@@ -97,33 +98,38 @@ if st.session_state.active_dataframe is not None:
         
         with st.chat_message("assistant"):
             with st.spinner("Processing dashboard telemetry..."):
-                model = genai.GenerativeModel("gemini-2.5-flash")
-                
-                if audio_data_payload:
-                    response = model.generate_content([audio_data_payload, agent_instruction])
-                else:
-                    response = model.generate_content(agent_instruction + f"\n\nUser Question: {user_query}")
+                try:
+                    model = genai.GenerativeModel("gemini-2.5-flash")
                     
-                st.markdown(response.text)
+                    if audio_data_payload:
+                        response = model.generate_content([audio_data_payload, agent_instruction])
+                    else:
+                        response = model.generate_content(agent_instruction + f"\n\nUser Question: {user_query}")
+                        
+                    st.markdown(response.text)
+                    
+                    # Clean markdown formatting so the browser reads it smoothly
+                    spoken_text = response.text.replace("*", "").replace("#", "").replace("-", "")
+                    
+                    tts_script = f"""
+                    <script>
+                        if ('speechSynthesis' in window) {{
+                            window.speechSynthesis.cancel(); // Stop any previous speech
+                            var utterance = new SpeechSynthesisUtterance({repr(spoken_text)});
+                            utterance.rate = 1.0; 
+                            window.speechSynthesis.speak(utterance);
+                        }}
+                    </script>
+                    """
+                    components.html(tts_script, height=0)
+                    st.session_state.chat_history.append({"role": "assistant", "content": response.text})
                 
-                # --- NEW UPGRADE: TEXT-TO-SPEECH VOICE BOX ---
-                # Clean markdown formatting so the browser reads it smoothly
-                spoken_text = response.text.replace("*", "").replace("#", "").replace("-", "")
-                
-                tts_script = f"""
-                <script>
-                    if ('speechSynthesis' in window) {{
-                        window.speechSynthesis.cancel(); // Stop any previous speech
-                        var utterance = new SpeechSynthesisUtterance({repr(spoken_text)});
-                        utterance.rate = 1.0; // Standard speech speed
-                        window.speechSynthesis.speak(utterance);
-                    }}
-                </script>
-                """
-                components.html(tts_script, height=0)
-                # ---------------------------------------------
-        
-        st.session_state.chat_history.append({"role": "assistant", "content": response.text})
+                # --- CRASH PROTECTION BLOCK ---
+                except exceptions.ResourceExhausted:
+                    st.error("⏳ **Google API Rate Limit Reached.** The free tier has a temporary limit on how much data can be processed per minute. Please wait 60 seconds and click or speak your command again!")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
+                # -------------------------------
         
     if st.session_state.chat_history:
         with st.expander("📚 View Complete Session Chat History Log"):
