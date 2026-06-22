@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import google.generativeai as genai
 import io
+import streamlit.components.v1 as components  # Required for browser voice playback
 
 # Secure connection to the Gemini API Key vault
 if "GEMINI_API_KEY" in st.secrets:
@@ -69,7 +70,6 @@ if st.session_state.active_dataframe is not None:
 
     with col1:
         st.markdown("**Option A: Use Physical Microphone**")
-        # Native web microphone recorder widget
         voice_file = st.audio_input("Click the record icon below to speak to your dashboard:")
         if voice_file is not None:
             audio_data_payload = {
@@ -86,7 +86,6 @@ if st.session_state.active_dataframe is not None:
 
     # Execution Loop for AI processing
     if user_query:
-        # Display the user's action
         with st.chat_message("user"):
             st.markdown(user_query)
         st.session_state.chat_history.append({"role": "user", "content": user_query})
@@ -100,17 +99,32 @@ if st.session_state.active_dataframe is not None:
             with st.spinner("Processing dashboard telemetry..."):
                 model = genai.GenerativeModel("gemini-2.5-flash")
                 
-                # If audio was captured, send the actual audio file data along with text prompt context
                 if audio_data_payload:
                     response = model.generate_content([audio_data_payload, agent_instruction])
                 else:
                     response = model.generate_content(agent_instruction + f"\n\nUser Question: {user_query}")
                     
                 st.markdown(response.text)
+                
+                # --- NEW UPGRADE: TEXT-TO-SPEECH VOICE BOX ---
+                # Clean markdown formatting so the browser reads it smoothly
+                spoken_text = response.text.replace("*", "").replace("#", "").replace("-", "")
+                
+                tts_script = f"""
+                <script>
+                    if ('speechSynthesis' in window) {{
+                        window.speechSynthesis.cancel(); // Stop any previous speech
+                        var utterance = new SpeechSynthesisUtterance({repr(spoken_text)});
+                        utterance.rate = 1.0; // Standard speech speed
+                        window.speechSynthesis.speak(utterance);
+                    }}
+                </script>
+                """
+                components.html(tts_script, height=0)
+                # ---------------------------------------------
         
         st.session_state.chat_history.append({"role": "assistant", "content": response.text})
         
-    # Persistent Conversation log
     if st.session_state.chat_history:
         with st.expander("📚 View Complete Session Chat History Log"):
             for msg in st.session_state.chat_history:
